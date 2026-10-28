@@ -40,8 +40,12 @@ jobs:
 
       - name: Fetch toolchain
         run: |
-          mkdir clang
-          curl -fsSL https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/$CLANG.tar.gz | tar xz -C clang
+          # Only this one toolchain dir; gitiles refuses archives this large.
+          git clone -q --depth 1 --filter=blob:none --sparse \
+            -b mirror-goog-main-llvm-toolchain-source \
+            https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 prebuilts
+          git -C prebuilts sparse-checkout set $CLANG
+          ln -s prebuilts/$CLANG clang
           clang/bin/clang --version
 
       - name: Add KernelSU Next
