@@ -35,7 +35,8 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc bison flex libssl-dev libelf-dev cpio lz4 python3 zip unzip
+          sudo apt-get install -y bc bison flex libssl-dev libelf-dev cpio lz4 python3 zip unzip dwarves
+          pahole --version
 
       - name: Fetch kernel source
         run: |
