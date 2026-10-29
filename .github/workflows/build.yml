@@ -2,6 +2,11 @@ name: Build gts9wifi kernel (KernelSU Next + SUSFS)
 
 on:
   workflow_dispatch:
+    inputs:
+      ksu:
+        description: Add KernelSU Next (off = control build of the same pipeline)
+        type: boolean
+        default: true
 
 env:
   KERNEL_REPO: samsung-sm8550-tab/android_kernel_samsung_sm8550
@@ -60,6 +65,7 @@ jobs:
           clang/bin/clang --version
 
       - name: Add KernelSU Next
+        if: ${{ inputs.ksu }}
         working-directory: kernel
         run: curl -fLSs https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/$KSUN_TAG/kernel/setup.sh | bash -s $KSUN_TAG
 
@@ -71,11 +77,19 @@ jobs:
           echo "-g${KERNEL_SHA:0:12}" > .scmversion
           mkdir -p out
           cp ../config/lineage24.config out/.config
-          scripts/config --file out/.config -e KSU -e KPROBES -e KPROBE_EVENTS
+          if [ "${{ inputs.ksu }}" = true ]; then
+            scripts/config --file out/.config -e KSU -e KPROBES -e KPROBE_EVENTS
+          fi
+          # Lineage's vendor_boot/vendor_dlkm/system_dlkm modules are signed with
+          # Lineage's build key, which this build does not have. With
+          # MODULE_SIG_PROTECT they count as unsigned and may not use/export the
+          # protected GKI symbols, so the first boot looped. Allow them.
+          scripts/config --file out/.config -d MODULE_SIG_PROTECT
           # Full LTO gets OOM-killed on hosted runners; thin LTO keeps the ABI.
           scripts/config --file out/.config -d LTO_CLANG_FULL -e LTO_CLANG_THIN
           make $MAKE_ARGS olddefconfig
-          grep -E '^CONFIG_(KSU|LTO_CLANG)' out/.config
+          grep -E '^CONFIG_(KSU|LTO_CLANG|MODULE_SIG)' out/.config || true
+          ! grep -q '^CONFIG_MODULE_SIG_PROTECT=y' out/.config
           rel=$(make -s $MAKE_ARGS kernelrelease)
           echo "kernelrelease: $rel"
           [ "$rel" = "$KERNEL_RELEASE" ]
@@ -97,6 +111,7 @@ jobs:
           cat args.txt
           cp kernel/out/arch/arm64/boot/Image unpacked/kernel
           eval python3 mkbootimg/mkbootimg.py $(cat args.txt) --output boot.img
+          truncate -s $(stat -c %s boot.lineage.img) boot.img   # full partition, no stale AVB footer
           mkdir dist
           cp boot.img kernel/out/arch/arm64/boot/Image kernel/out/.config dist/
           strings dist/Image | grep -m1 'Linux version 5' > dist/version.txt
@@ -108,6 +123,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tag=ksun-$KSUN_TAG-$(date -u +%Y%m%d-%H%M)
+          if [ "${{ inputs.ksu }}" = true ]; then v=ksun-$KSUN_TAG; else v=control-noksu; fi
+          tag=$v-nosigprot-$(date -u +%Y%m%d-%H%M)
           gh release create "$tag" dist/* -R "$GITHUB_REPOSITORY" \
-            --title "$tag" --notes "Lineage 24.0 kernel ($KERNEL_RELEASE) + KernelSU Next $KSUN_TAG (SUSFS). $(cat dist/version.txt)"
+            --title "$tag" --notes "Lineage 24.0 kernel ($KERNEL_RELEASE), variant $v, MODULE_SIG_PROTECT off. $(cat dist/version.txt)"
