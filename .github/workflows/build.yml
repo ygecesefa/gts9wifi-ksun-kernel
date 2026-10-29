@@ -13,6 +13,9 @@ env:
   LINEAGE_SHA256: 28bf1be6dca7014ad5576ae97d91998dc235a0783d7775d83c10f92c3b5dac04
   MAKE_ARGS: O=out ARCH=arm64 LLVM=1 LLVM_IAS=1
 
+permissions:
+  contents: write   # publish boot.img as a release (artifact storage quota is tiny)
+
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -82,7 +85,7 @@ jobs:
         run: |
           export PATH=$GITHUB_WORKSPACE/clang/bin:$PATH
           make $MAKE_ARGS -j$(nproc) Image || { df -h /; free -h; exit 1; }
-          strings out/arch/arm64/boot/Image | grep -m1 'Linux version'
+          strings out/arch/arm64/boot/Image | grep -m1 'Linux version 5'
 
       - name: Repack Lineage boot.img with the new kernel
         run: |
@@ -96,11 +99,15 @@ jobs:
           eval python3 mkbootimg/mkbootimg.py $(cat args.txt) --output boot.img
           mkdir dist
           cp boot.img kernel/out/arch/arm64/boot/Image kernel/out/.config dist/
-          strings dist/Image | grep -m1 'Linux version' > dist/version.txt
+          strings dist/Image | grep -m1 'Linux version 5' > dist/version.txt
+          grep -q "$KERNEL_RELEASE " dist/version.txt
           (cd dist && sha256sum boot.img Image > SHA256SUMS)
           cat dist/version.txt dist/SHA256SUMS
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: gts9wifi-ksun-boot
-          path: dist/
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=ksun-$KSUN_TAG-$(date -u +%Y%m%d-%H%M)
+          gh release create "$tag" dist/* -R "$GITHUB_REPOSITORY" \
+            --title "$tag" --notes "Lineage 24.0 kernel ($KERNEL_RELEASE) + KernelSU Next $KSUN_TAG (SUSFS). $(cat dist/version.txt)"
