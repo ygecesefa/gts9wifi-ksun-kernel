@@ -7,6 +7,11 @@ on:
         description: Add KernelSU Next (off = control build of the same pipeline)
         type: boolean
         default: true
+      lto:
+        description: LTO mode (full = what Lineage ships; thin bootlooped)
+        type: choice
+        options: [full, thin]
+        default: full
 
 env:
   KERNEL_REPO: samsung-sm8550-tab/android_kernel_samsung_sm8550
@@ -35,10 +40,13 @@ jobs:
           docker image prune -af > /dev/null || true
           # Linking vmlinux needs more than the runner's 16 GB RAM, but the
           # link output is mmapped: a full disk shows up as "Bus error".
+          # Full LTO links the whole kernel in one process; put a big swap on
+          # the runner's separate /mnt disk so it does not eat the build disk.
           sudo swapoff -a || true
-          sudo fallocate -l 10G /swapfile2 && sudo chmod 600 /swapfile2
-          sudo mkswap /swapfile2 && sudo swapon /swapfile2
-          free -h; df -h /
+          df -h / /mnt
+          sudo fallocate -l 24G /mnt/swapfile2 && sudo chmod 600 /mnt/swapfile2
+          sudo mkswap /mnt/swapfile2 && sudo swapon /mnt/swapfile2
+          free -h; df -h / /mnt
 
       - name: Install build dependencies
         run: |
@@ -85,8 +93,11 @@ jobs:
           # MODULE_SIG_PROTECT they count as unsigned and may not use/export the
           # protected GKI symbols, so the first boot looped. Allow them.
           scripts/config --file out/.config -d MODULE_SIG_PROTECT
-          # Full LTO gets OOM-killed on hosted runners; thin LTO keeps the ABI.
-          scripts/config --file out/.config -d LTO_CLANG_FULL -e LTO_CLANG_THIN
+          # Thin LTO built a kernel that hard-resets right after the bootloader,
+          # even without KSU, so match Lineage's full LTO by default.
+          if [ "${{ inputs.lto }}" = thin ]; then
+            scripts/config --file out/.config -d LTO_CLANG_FULL -e LTO_CLANG_THIN
+          fi
           make $MAKE_ARGS olddefconfig
           grep -E '^CONFIG_(KSU|LTO_CLANG|MODULE_SIG)' out/.config || true
           ! grep -q '^CONFIG_MODULE_SIG_PROTECT=y' out/.config
@@ -124,6 +135,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if [ "${{ inputs.ksu }}" = true ]; then v=ksun-$KSUN_TAG; else v=control-noksu; fi
-          tag=$v-nosigprot-$(date -u +%Y%m%d-%H%M)
+          tag=$v-${{ inputs.lto }}lto-nosigprot-$(date -u +%Y%m%d-%H%M)
           gh release create "$tag" dist/* -R "$GITHUB_REPOSITORY" \
             --title "$tag" --notes "Lineage 24.0 kernel ($KERNEL_RELEASE), variant $v, MODULE_SIG_PROTECT off. $(cat dist/version.txt)"
