@@ -93,14 +93,19 @@ jobs:
           # MODULE_SIG_PROTECT they count as unsigned and may not use/export the
           # protected GKI symbols, so the first boot looped. Allow them.
           scripts/config --file out/.config -d MODULE_SIG_PROTECT
+          # Every vendor module carries split BTF against Lineage's vmlinux BTF.
+          # Our vmlinux BTF never has identical type IDs, and without this the
+          # kernel refuses those modules: first-stage init dies with no log.
+          scripts/config --file out/.config -e MODULE_ALLOW_BTF_MISMATCH
           # Thin LTO built a kernel that hard-resets right after the bootloader,
           # even without KSU, so match Lineage's full LTO by default.
           if [ "${{ inputs.lto }}" = thin ]; then
             scripts/config --file out/.config -d LTO_CLANG_FULL -e LTO_CLANG_THIN
           fi
           make $MAKE_ARGS olddefconfig
-          grep -E '^CONFIG_(KSU|LTO_CLANG|MODULE_SIG)' out/.config || true
+          grep -E '^CONFIG_(KSU|LTO_CLANG|MODULE_SIG|MODULE_ALLOW_BTF)' out/.config || true
           ! grep -q '^CONFIG_MODULE_SIG_PROTECT=y' out/.config
+          grep -q '^CONFIG_MODULE_ALLOW_BTF_MISMATCH=y' out/.config
           rel=$(make -s $MAKE_ARGS kernelrelease)
           echo "kernelrelease: $rel"
           [ "$rel" = "$KERNEL_RELEASE" ]
@@ -135,6 +140,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if [ "${{ inputs.ksu }}" = true ]; then v=ksun-$KSUN_TAG; else v=control-noksu; fi
-          tag=$v-${{ inputs.lto }}lto-nosigprot-$(date -u +%Y%m%d-%H%M)
+          tag=$v-${{ inputs.lto }}lto-btfok-$(date -u +%Y%m%d-%H%M)
           gh release create "$tag" dist/* -R "$GITHUB_REPOSITORY" \
             --title "$tag" --notes "Lineage 24.0 kernel ($KERNEL_RELEASE), variant $v, MODULE_SIG_PROTECT off. $(cat dist/version.txt)"
